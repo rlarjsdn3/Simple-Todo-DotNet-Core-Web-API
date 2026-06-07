@@ -1,12 +1,12 @@
-namespace TodoApi.Models;
+namespace TodoApi.Dtos;
 
 /// <summary>
-/// 하나의 할 일 정보를 나타냅니다.
+/// 클라이언트에 반환할 Todo 데이터를 나타냅니다.
 /// </summary>
-public class Todo
+public class TodoResponse
 {
     /// <summary>
-    /// 할 일의 고유 번호입니디.
+    /// 할 일의 고유 번호입니다.
     /// </summary>
     public int Id { get; set; }
 
@@ -19,4 +19,9 @@ public class Todo
     /// 할 일의 완료 여부입니다.
     /// </summary>
     public bool IsCompleted { get; set; }
-} 
+
+    /// <summary>
+    /// 할 일을 등록한 UTC 시각입니다.
+    /// </summary>
+    public DateTime CreatedAt { get; set; }
+}
