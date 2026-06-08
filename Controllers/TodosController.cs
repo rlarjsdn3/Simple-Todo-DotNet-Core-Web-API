@@ -1,9 +1,6 @@
-using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TodoApi.Data;
 using TodoApi.Dtos;
-using TodoApi.Models;
+using TodoApi.Services;
 
 namespace TodoApi.Controllers;
 
@@ -14,16 +11,11 @@ namespace TodoApi.Controllers;
 [Route("api/[controller]")]
 public class TodosController : ControllerBase
 {
-    private readonly TodoDbContext _dbContext;
+    private readonly ITodoService _todoService;
 
-    private readonly ILogger<TodosController> _logger;
-
-    public TodosController(
-        TodoDbContext dbContext,
-        ILogger<TodosController> logger)
+    public TodosController(ITodoService todoService)
     {
-        _dbContext = dbContext;
-        _logger = logger;
+        _todoService = todoService;
     }
 
 
@@ -32,25 +24,16 @@ public class TodosController : ControllerBase
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<List<TodoResponse>>> GetAll(
+        [FromQuery] string? keyword,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation(
-            "Todo 목록 조회 요청"
-        );
+        IReadOnlyList<TodoResponse> todos = 
+            await _todoService.GetAllAsync(
+                keyword,
+                cancellationToken
+            );
 
-        List<TodoResponse> response = await _dbContext.Todos
-            .AsNoTracking()
-            .OrderByDescending(todo => todo.Id)
-            .Select(todo => new TodoResponse
-            {
-                Id = todo.Id,
-                Title = todo.Title,
-                IsCompleted = todo.IsCompleted,
-                CreatedAt = todo.CreatedAt
-            })
-            .ToListAsync(cancellationToken);
-
-        return Ok(response);
+        return Ok(todos);
     }
 
     /// <summary>
@@ -62,18 +45,12 @@ public class TodosController : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation(
-            "Todo 단일 조회 요청: TodoId={TodoId}",
-            id
-        );
-
-        Todo? todo = await _dbContext.Todos
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                todo => todo.Id == id,
+        TodoResponse? todo = 
+            await _todoService.GetByIdAsync(
+                id,
                 cancellationToken
             );
-
+    
         if (todo is null)
         {
             return NotFound(new
@@ -82,7 +59,7 @@ public class TodosController : ControllerBase
             });
         }
 
-        return Ok(ToResponse(todo));
+        return Ok(todo);
     }
 
     /// <summary>
@@ -93,35 +70,17 @@ public class TodosController : ControllerBase
         [FromBody] CreateTodoRequest request,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation(
-            "Todo 등록 요청: Title={Title}",
-            request.Title
-        );
+        TodoResponse todo = 
+            await _todoService.CreateAsync(
+                request,
+                cancellationToken
+            );
 
-        var todo = new Todo
-        {
-            Title = request.Title.Trim(),
-            IsCompleted = false,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        _dbContext.Todos.Add(todo);
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        _logger.LogInformation(
-            "Todo를 DB에 등록했습니다. TodoId={TodoId}, Title={Title}",
-            todo.Id,
-            todo.Title
-        );
-
-        TodoResponse response = ToResponse(todo);
-
-        return CreatedAtAction(
-            nameof(GetById),
-            new { id = todo.Id },
-            response
-        );
+            return CreatedAtAction(
+                nameof(GetById),
+                new { id = todo.Id },
+                todo
+            );
     }
 
     /// <summary>
@@ -133,45 +92,22 @@ public class TodosController : ControllerBase
         [FromBody] UpdateTodoRequest request,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation(
-            "Todo 수정 요청: TodoId={TodoId}, Title={Title}, IsCompleted={IsCompleted}",
-            id,
-            request.Title,
-            request.IsCompleted
-        );
-
-        Todo? todo = await _dbContext.Todos
-            .FirstOrDefaultAsync(
-                todo => todo.Id == id,
+        TodoResponse? todo =
+            await _todoService.UpdateAsync(
+                id,
+                request,
                 cancellationToken
             );
 
         if (todo is null)
         {
-            _logger.LogWarning(
-                "수정할 Todo를 찾지 못했습니다. TodoId={TodoId}",
-                id
-            );
-
             return NotFound(new
             {
                 message = $"{id}번 할 일을 찾을 수 없습니다."
             });
         }
 
-        todo.Title = request.Title; 
-        todo.IsCompleted = request.IsCompleted;
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        _logger.LogInformation(
-            "Todo를 수정했습니다. TodoId={TodoId}, Title={Title}, IsCompleted={IsCompleted}",
-            todo.Id,
-            todo.Title,
-            todo.IsCompleted
-        );
-
-        return Ok(ToResponse(todo));
+        return Ok(todo);
     }
 
     /// <summary>
@@ -184,53 +120,19 @@ public class TodosController : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation(
-            "Todo 삭제 요청: TodoId={TodoId}",
-            id
+        bool deleted = await _todoService.DeleteAsync(
+            id,
+            cancellationToken
         );
 
-        Todo? todo = await _dbContext.Todos
-            .FirstOrDefaultAsync(
-                todo => todo.Id == id,
-                cancellationToken
-            );
-
-        if (todo is null)
+        if (!deleted)
         {
-            _logger.LogWarning(
-                "삭제할 Todo를 찾지 못했습니다. TodoId={TodoId}",
-                id
-            );
-
             return NotFound(new
             {
                 message = $"{id}번 할 일을 찾을 수 없습니다."
             });
         }
 
-        _dbContext.Todos.Remove(todo);
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        _logger.LogInformation(
-            "Todo를 삭제했습니다. TodoId={TodoId}, Title={Title}",
-            todo.Id,
-            todo.Title
-        );
-
         return NoContent();
-    }
-
-    /// <summary>
-    /// 내부 Todo 모델을 API 응답 DTO로 변환합니다.
-    /// </summary>
-    private TodoResponse ToResponse(Todo todo)
-    {
-        return new TodoResponse
-        {
-            Id = todo.Id,
-            Title = todo.Title,
-            IsCompleted = todo.IsCompleted
-        };
     }
 }
